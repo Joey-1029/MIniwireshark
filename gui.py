@@ -1,4 +1,4 @@
-# gui.py - 完整可运行版本
+# gui.py - 完整可运行版本（已集成B同学模块）
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, filedialog
 import threading
@@ -7,6 +7,11 @@ import matplotlib.pyplot as plt
 from collections import Counter, defaultdict
 from datetime import datetime
 from packet_capture import PacketCapture
+
+# ===== 添加B同学的模块导入 =====
+from analyzer import PacketAnalyzer
+from utils import anonymize_packets, detect_port_scan, detect_ddos, generate_privacy_report
+# ===== B模块导入结束 =====
 
 class PacketAnalyzerGUI:
     def __init__(self, root):
@@ -65,24 +70,24 @@ class PacketAnalyzerGUI:
         ttk.Button(control_frame, text="🗑️ 清空列表", command=self.clear_table).grid(row=0, column=8, padx=5)
         ttk.Button(control_frame, text="💾 保存", command=self.save_packets).grid(row=0, column=9, padx=5)
         
-        # 分析功能按钮
+        # 分析功能按钮 - 使用B同学的模块
         self.stats_btn = ttk.Button(control_frame, text="📊 统计", 
-                                   command=self.show_statistics,
+                                   command=self.show_statistics,  # B模块功能
                                    state=tk.DISABLED)
         self.stats_btn.grid(row=0, column=10, padx=5)
         
         self.chart_btn = ttk.Button(control_frame, text="📈 图表",
-                                   command=self.generate_charts,
+                                   command=self.generate_charts,  # B模块功能
                                    state=tk.DISABLED)
         self.chart_btn.grid(row=0, column=11, padx=5)
         
         self.anon_btn = ttk.Button(control_frame, text="🔒 匿名化",
-                                  command=self.anonymize_data,
+                                  command=self.anonymize_data,  # B模块功能
                                   state=tk.DISABLED)
         self.anon_btn.grid(row=0, column=12, padx=5)
         
         self.anomaly_btn = ttk.Button(control_frame, text="⚠️ 异常检测",
-                                     command=self.detect_anomalies,
+                                     command=self.detect_anomalies,  # B模块功能
                                      state=tk.DISABLED)
         self.anomaly_btn.grid(row=0, column=13, padx=5)
         
@@ -285,7 +290,321 @@ class PacketAnalyzerGUI:
             # 显示详细信息
             self.detail_text.insert(1.0, details)
     
-    # ====== 必需的方法：以下是缺失的方法 ======
+    # ====== B同学模块的集成函数 ======
+    
+    def show_statistics(self):
+        """统计按钮回调 - 使用B同学的analyzer模块"""
+        if not hasattr(self, 'capture') or not self.capture or not hasattr(self.capture, 'packets'):
+            messagebox.showwarning("提示", "请先抓取数据包")
+            return
+        
+        packets = self.capture.packets
+        if not packets:
+            messagebox.showinfo("提示", "没有可分析的数据包")
+            return
+        
+        try:
+            # 使用B同学的analyzer模块
+            analyzer = PacketAnalyzer(packets)
+            stats = analyzer.get_statistics()
+            
+            # 创建统计窗口
+            self._create_statistics_window(stats)
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"统计分析失败: {str(e)}")
+    
+    def _create_statistics_window(self, stats):
+        """创建统计信息显示窗口"""
+        stats_window = tk.Toplevel(self.root)
+        stats_window.title("数据包统计信息")
+        stats_window.geometry("800x600")
+        
+        # 使用Notebook（标签页）
+        notebook = ttk.Notebook(stats_window)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 标签页1：基本统计
+        basic_frame = ttk.Frame(notebook)
+        notebook.add(basic_frame, text="📊 基本统计")
+        
+        text_area = scrolledtext.ScrolledText(basic_frame, width=90, height=25, font=("Courier", 10))
+        text_area.pack(padx=10, pady=10)
+        
+        # 格式化显示统计信息
+        display_text = "=" * 60 + "\n"
+        display_text += "数据包统计报告\n"
+        display_text += "=" * 60 + "\n\n"
+        
+        display_text += f"总数据包数: {stats.get('total_packets', 0)}\n"
+        display_text += f"总字节数: {stats.get('total_bytes', 0):,} 字节\n"
+        display_text += f"平均包大小: {stats.get('avg_packet_size', 0):.1f} 字节\n"
+        display_text += f"时间范围: {stats.get('time_range', '未知')}\n"
+        display_text += f"唯一源IP数: {stats.get('unique_src_ips', 0)}\n"
+        display_text += f"唯一目标IP数: {stats.get('unique_dst_ips', 0)}\n\n"
+        
+        display_text += "协议分布:\n"
+        if 'protocol_distribution' in stats:
+            total = stats['total_packets']
+            for protocol, count in stats['protocol_distribution'].items():
+                percentage = (count / total) * 100 if total > 0 else 0
+                bar = "█" * int(percentage / 2)  # 每个█代表2%
+                display_text += f"  {protocol:10} {count:5} ({percentage:5.1f}%) {bar}\n"
+        
+        text_area.insert(1.0, display_text)
+        text_area.config(state=tk.DISABLED)
+        
+        # 标签页2：IP统计
+        ip_frame = ttk.Frame(notebook)
+        notebook.add(ip_frame, text="📍 IP统计")
+        
+        ip_text = scrolledtext.ScrolledText(ip_frame, width=90, height=25, font=("Courier", 10))
+        ip_text.pack(padx=10, pady=10)
+        
+        ip_info = "=" * 60 + "\n"
+        ip_info += "IP地址统计\n"
+        ip_info += "=" * 60 + "\n\n"
+        
+        if 'top_src_ips' in stats and stats['top_src_ips']:
+            ip_info += "Top 10 源IP地址:\n"
+            ip_info += "-" * 50 + "\n"
+            for ip, count in stats['top_src_ips'].items():
+                percentage = (count / stats['total_packets']) * 100
+                ip_info += f"  {ip:20} {count:5}包 ({percentage:5.1f}%)\n"
+        
+        if 'top_dst_ips' in stats and stats['top_dst_ips']:
+            ip_info += "\nTop 10 目标IP地址:\n"
+            ip_info += "-" * 50 + "\n"
+            for ip, count in stats['top_dst_ips'].items():
+                percentage = (count / stats['total_packets']) * 100
+                ip_info += f"  {ip:20} {count:5}包 ({percentage:5.1f}%)\n"
+        
+        ip_text.insert(1.0, ip_info)
+        ip_text.config(state=tk.DISABLED)
+    
+    def generate_charts(self):
+        """图表按钮回调 - 使用B同学的analyzer模块"""
+        if not hasattr(self, 'capture') or not self.capture or not hasattr(self.capture, 'packets'):
+            messagebox.showwarning("提示", "请先抓取数据包")
+            return
+        
+        packets = self.capture.packets
+        if not packets:
+            messagebox.showinfo("提示", "没有可分析的数据包")
+            return
+        
+        try:
+            # 使用B同学的analyzer模块生成图表
+            analyzer = PacketAnalyzer(packets)
+            charts = analyzer.generate_all_charts()
+            
+            if charts:
+                messagebox.showinfo("成功", f"已生成 {len(charts)} 个图表文件\n"
+                                         "查看当前目录下的PNG文件")
+            else:
+                messagebox.showinfo("提示", "图表生成完成")
+                
+        except ImportError:
+            messagebox.showerror("错误", "需要安装matplotlib库\n运行: pip install matplotlib")
+        except Exception as e:
+            messagebox.showerror("错误", f"图表生成失败: {str(e)}")
+    
+    def anonymize_data(self):
+        """匿名化按钮回调 - 使用B同学的utils模块"""
+        if not hasattr(self, 'capture') or not self.capture or not hasattr(self.capture, 'packets'):
+            messagebox.showwarning("提示", "请先抓取数据包")
+            return
+        
+        packets = self.capture.packets
+        if not packets:
+            messagebox.showinfo("提示", "没有可分析的数据包")
+            return
+        
+        # 确认操作
+        confirm = messagebox.askyesno("确认", 
+            "匿名化将隐藏IP和MAC地址的敏感部分\n是否继续？")
+        
+        if not confirm:
+            return
+        
+        try:
+            # 使用B同学的utils模块进行匿名化
+            anonymized_packets = anonymize_packets(packets)
+            
+            # 生成隐私报告
+            privacy_report = generate_privacy_report(packets)
+            
+            # 创建新窗口显示结果
+            self._show_anonymization_result(anonymized_packets, privacy_report)
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"匿名化失败: {str(e)}")
+    
+    def _show_anonymization_result(self, anonymized_packets, privacy_report):
+        """显示匿名化结果"""
+        result_window = tk.Toplevel(self.root)
+        result_window.title("匿名化结果")
+        result_window.geometry("700x500")
+        
+        # 显示隐私报告
+        report_text = scrolledtext.ScrolledText(result_window, width=80, height=20, font=("Courier", 10))
+        report_text.pack(padx=10, pady=10)
+        
+        info = "=" * 60 + "\n"
+        info += "隐私保护报告\n"
+        info += "=" * 60 + "\n\n"
+        
+        info += f"处理数据包数: {privacy_report.get('total_packets', 0)}\n"
+        info += f"唯一IP地址数: {len(privacy_report.get('unique_ips', []))}\n"
+        info += f"唯一MAC地址数: {len(privacy_report.get('unique_macs', []))}\n"
+        info += f"隐私风险等级: {privacy_report.get('risk_level', '未知')}\n"
+        info += f"风险评分: {privacy_report.get('risk_score', 0)}/10\n\n"
+        
+        info += "处理建议:\n"
+        info += f"{privacy_report.get('recommendation', '无')}\n\n"
+        
+        info += "示例（第一个数据包）:\n"
+        if anonymized_packets:
+            sample = anonymized_packets[0]
+            info += f"  原始IP: 已隐藏\n"
+            info += f"  匿名IP: {sample.get('src_ip', 'N/A')} -> {sample.get('dst_ip', 'N/A')}\n"
+        
+        report_text.insert(1.0, info)
+        report_text.config(state=tk.DISABLED)
+        
+        # 更新按钮
+        update_btn = ttk.Button(result_window, text="更新显示匿名化数据",
+                              command=lambda: self._update_with_anonymized(anonymized_packets))
+        update_btn.pack(pady=10)
+    
+    def _update_with_anonymized(self, anonymized_packets):
+        """用匿名化数据更新界面"""
+        # 清空当前显示
+        self.clear_table()
+        
+        # 显示匿名化后的数据
+        for packet in anonymized_packets:
+            self._add_packet_to_table_gui(packet)
+        
+        messagebox.showinfo("完成", "界面已更新为匿名化数据")
+    
+    def detect_anomalies(self):
+        """异常检测按钮回调 - 使用B同学的utils模块"""
+        if not hasattr(self, 'capture') or not self.capture or not hasattr(self.capture, 'packets'):
+            messagebox.showwarning("提示", "请先抓取数据包")
+            return
+        
+        packets = self.capture.packets
+        if not packets:
+            messagebox.showinfo("提示", "没有可分析的数据包")
+            return
+        
+        try:
+            # 使用B同学的utils模块进行异常检测
+            port_scans = detect_port_scan(packets, threshold=10)
+            ddos_attacks = detect_ddos(packets, packet_threshold=100)
+            
+            # 显示检测结果
+            self._show_anomaly_results(port_scans, ddos_attacks)
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"异常检测失败: {str(e)}")
+    
+    def _show_anomaly_results(self, port_scans, ddos_attacks):
+        """显示异常检测结果"""
+        result_window = tk.Toplevel(self.root)
+        result_window.title("异常流量检测报告")
+        result_window.geometry("900x700")
+        
+        # 使用Notebook
+        notebook = ttk.Notebook(result_window)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 标签页1：端口扫描检测
+        if port_scans:
+            scan_frame = ttk.Frame(notebook)
+            notebook.add(scan_frame, text=f"🔍 端口扫描 ({len(port_scans)})")
+            
+            scan_text = scrolledtext.ScrolledText(scan_frame, width=100, height=25, font=("Courier", 10))
+            scan_text.pack(padx=10, pady=10)
+            
+            info = "=" * 60 + "\n"
+            info += "端口扫描检测报告\n"
+            info += "=" * 60 + "\n\n"
+            
+            for i, scan in enumerate(port_scans, 1):
+                info += f"{i}. 可疑IP: {scan.get('src_ip', '未知')}\n"
+                info += f"   扫描端口数: {scan.get('port_count', 0)}\n"
+                info += f"   风险等级: {scan.get('risk_level', '未知')}\n"
+                if 'description' in scan:
+                    info += f"   描述: {scan['description']}\n\n"
+                else:
+                    info += "\n"
+            
+            scan_text.insert(1.0, info)
+            scan_text.config(state=tk.DISABLED)
+        else:
+            safe_frame = ttk.Frame(notebook)
+            notebook.add(safe_frame, text="✅ 端口扫描")
+            
+            label = ttk.Label(safe_frame, text="✅ 未检测到端口扫描活动", font=("Arial", 14))
+            label.pack(pady=50)
+        
+        # 标签页2：DDoS检测
+        if ddos_attacks:
+            ddos_frame = ttk.Frame(notebook)
+            notebook.add(ddos_frame, text=f"⚡ DDoS攻击 ({len(ddos_attacks)})")
+            
+            ddos_text = scrolledtext.ScrolledText(ddos_frame, width=100, height=25, font=("Courier", 10))
+            ddos_text.pack(padx=10, pady=10)
+            
+            info = "=" * 60 + "\n"
+            info += "DDoS攻击检测报告\n"
+            info += "=" * 60 + "\n\n"
+            
+            for i, attack in enumerate(ddos_attacks, 1):
+                info += f"{i}. 攻击时间: {attack.get('attack_time', '未知')}\n"
+                info += f"   攻击类型: {attack.get('attack_type', '未知')}\n"
+                info += f"   包速率: {attack.get('packet_rate', '未知')}\n"
+                info += f"   风险等级: {attack.get('risk_level', '未知')}\n\n"
+            
+            ddos_text.insert(1.0, info)
+            ddos_text.config(state=tk.DISABLED)
+        else:
+            safe_frame = ttk.Frame(notebook)
+            notebook.add(safe_frame, text="✅ DDoS检测")
+            
+            label = ttk.Label(safe_frame, text="✅ 未检测到DDoS攻击", font=("Arial", 14))
+            label.pack(pady=50)
+        
+        # 标签页3：安全建议
+        advice_frame = ttk.Frame(notebook)
+        notebook.add(advice_frame, text="💡 安全建议")
+        
+        advice_text = scrolledtext.ScrolledText(advice_frame, width=100, height=25, font=("Courier", 10))
+        advice_text.pack(padx=10, pady=10)
+        
+        advice = "=" * 60 + "\n"
+        advice += "网络安全建议\n"
+        advice += "=" * 60 + "\n\n"
+        
+        if port_scans or ddos_attacks:
+            advice += "⚠️ 检测到安全威胁，建议：\n"
+            advice += "1. 检查防火墙规则\n"
+            advice += "2. 监控异常IP地址\n"
+            advice += "3. 更新安全补丁\n"
+            advice += "4. 加强访问控制\n"
+        else:
+            advice += "✅ 网络状态良好，建议：\n"
+            advice += "1. 定期更新系统\n"
+            advice += "2. 使用强密码\n"
+            advice += "3. 启用日志记录\n"
+            advice += "4. 定期安全扫描\n"
+        
+        advice_text.insert(1.0, advice)
+        advice_text.config(state=tk.DISABLED)
+    
+    # ====== 原有GUI功能 ======
     
     def stop_capture(self):
         """停止抓包"""
@@ -341,570 +660,6 @@ class PacketAnalyzerGUI:
                 self.status_var.set(f"数据已保存到 {filename}")
             else:
                 messagebox.showerror("错误", "保存失败")
-    
-    def show_statistics(self):
-        """显示统计信息"""
-        if not hasattr(self, 'capture') or not self.capture or not hasattr(self.capture, 'packets') or not self.capture.packets:
-            messagebox.showwarning("警告", "没有数据可分析")
-            return
-        
-        # 创建统计窗口
-        stats_window = tk.Toplevel(self.root)
-        stats_window.title("数据包统计信息")
-        stats_window.geometry("700x600")
-        
-        # 使用Notebook实现多标签页
-        notebook = ttk.Notebook(stats_window)
-        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # 标签页1：基本统计
-        basic_frame = ttk.Frame(notebook)
-        notebook.add(basic_frame, text="📊 基本统计")
-        
-        basic_text = scrolledtext.ScrolledText(basic_frame, width=80, height=25, font=("Courier", 10))
-        basic_text.pack(padx=10, pady=10)
-        
-        # 计算基本统计
-        packets = self.capture.packets
-        total_packets = len(packets)
-        total_bytes = sum(p['length'] for p in packets)
-        avg_size = total_bytes / total_packets if total_packets > 0 else 0
-        
-        # 协议统计
-        protocol_count = Counter([p.get('protocol', '未知') for p in packets])
-        
-        # 应用统计
-        app_count = Counter([p.get('application', '未知') for p in packets if 'application' in p])
-        
-        # 构建显示文本
-        info = "=" * 60 + "\n"
-        info += "数据包统计报告\n"
-        info += "=" * 60 + "\n\n"
-        
-        info += "📦 数据包概览\n"
-        info += "  " + "-" * 50 + "\n"
-        info += f"  总数据包数: {total_packets}\n"
-        info += f"  总字节数: {total_bytes:,} 字节\n"
-        info += f"  平均包大小: {avg_size:.1f} 字节\n"
-        if packets:
-            info += f"  抓包时间: {packets[0]['timestamp']} - {packets[-1]['timestamp']}\n\n"
-        
-        info += "📋 协议分布\n"
-        info += "  " + "-" * 50 + "\n"
-        for protocol, count in protocol_count.most_common():
-            percentage = (count / total_packets) * 100
-            bar = "█" * int(percentage / 2)  # 每个█代表2%
-            info += f"  {protocol:10} {count:5}包 ({percentage:5.1f}%) {bar}\n"
-        
-        info += "\n🌐 应用协议\n"
-        info += "  " + "-" * 50 + "\n"
-        if app_count:
-            for app, count in app_count.most_common():
-                if app and app != '未知':
-                    info += f"  {app:10} {count:5}包\n"
-        else:
-            info += "  未识别到应用层协议\n"
-        
-        info += "\n🔢 包大小分布\n"
-        info += "  " + "-" * 50 + "\n"
-        size_ranges = {'<64': 0, '64-127': 0, '128-255': 0, '256-511': 0, '512-1023': 0, '>=1024': 0}
-        for packet in packets:
-            size = packet['length']
-            if size < 64:
-                size_ranges['<64'] += 1
-            elif size < 128:
-                size_ranges['64-127'] += 1
-            elif size < 256:
-                size_ranges['128-255'] += 1
-            elif size < 512:
-                size_ranges['256-511'] += 1
-            elif size < 1024:
-                size_ranges['512-1023'] += 1
-            else:
-                size_ranges['>=1024'] += 1
-        
-        for range_name, count in size_ranges.items():
-            if count > 0:
-                percentage = (count / total_packets) * 100
-                bar = "█" * int(percentage / 2)
-                info += f"  {range_name:10} {count:5}包 ({percentage:5.1f}%) {bar}\n"
-        
-        basic_text.insert(1.0, info)
-        basic_text.config(state=tk.DISABLED)
-        
-        # 标签页2：IP地址统计
-        ip_frame = ttk.Frame(notebook)
-        notebook.add(ip_frame, text="📍 IP统计")
-        
-        ip_text = scrolledtext.ScrolledText(ip_frame, width=80, height=25, font=("Courier", 10))
-        ip_text.pack(padx=10, pady=10)
-        
-        # 统计IP地址
-        src_ip_count = Counter([p.get('src_ip') for p in packets if p.get('src_ip') and p.get('src_ip') != 'N/A'])
-        dst_ip_count = Counter([p.get('dst_ip') for p in packets if p.get('dst_ip') and p.get('dst_ip') != 'N/A'])
-        
-        ip_info = "=" * 60 + "\n"
-        ip_info += "IP地址统计\n"
-        ip_info += "=" * 60 + "\n\n"
-        
-        ip_info += "🔸 源IP地址 (Top 15)\n"
-        ip_info += "  " + "-" * 50 + "\n"
-        for ip, count in src_ip_count.most_common(15):
-            percentage = (count / total_packets) * 100
-            ip_info += f"  {ip:20} {count:5}包 ({percentage:5.1f}%)\n"
-        
-        ip_info += "\n🔹 目标IP地址 (Top 15)\n"
-        ip_info += "  " + "-" * 50 + "\n"
-        for ip, count in dst_ip_count.most_common(15):
-            percentage = (count / total_packets) * 100
-            ip_info += f"  {ip:20} {count:5}包 ({percentage:5.1f}%)\n"
-        
-        ip_text.insert(1.0, ip_info)
-        ip_text.config(state=tk.DISABLED)
-        
-        # 标签页3：端口统计
-        port_frame = ttk.Frame(notebook)
-        notebook.add(port_frame, text="🔌 端口统计")
-        
-        port_text = scrolledtext.ScrolledText(port_frame, width=80, height=25, font=("Courier", 10))
-        port_text.pack(padx=10, pady=10)
-        
-        # 统计端口
-        dst_port_count = Counter([p.get('dst_port') for p in packets if p.get('dst_port')])
-        src_port_count = Counter([p.get('src_port') for p in packets if p.get('src_port')])
-        
-        port_info = "=" * 60 + "\n"
-        port_info += "端口统计\n"
-        port_info += "=" * 60 + "\n\n"
-        
-        port_info += "🎯 目标端口 (Top 20)\n"
-        port_info += "  " + "-" * 50 + "\n"
-        for port, count in dst_port_count.most_common(20):
-            service = self._get_port_service(port)
-            percentage = (count / total_packets) * 100 if total_packets > 0 else 0
-            port_info += f"  端口 {port:5} ({service:15}) {count:5}包 ({percentage:5.1f}%)\n"
-        
-        port_info += "\n📡 源端口 (Top 20)\n"
-        port_info += "  " + "-" * 50 + "\n"
-        for port, count in src_port_count.most_common(20):
-            service = "临时端口"
-            if int(port) < 1024:
-                service = self._get_port_service(port)
-            percentage = (count / total_packets) * 100 if total_packets > 0 else 0
-            port_info += f"  端口 {port:5} ({service:15}) {count:5}包 ({percentage:5.1f}%)\n"
-        
-        port_text.insert(1.0, port_info)
-        port_text.config(state=tk.DISABLED)
-    
-    def _get_port_service(self, port):
-        """获取端口对应的服务名称"""
-        try:
-            port_int = int(port)
-        except:
-            return "未知"
-        
-        common_ports = {
-            20: "FTP-数据", 21: "FTP-控制", 22: "SSH", 23: "Telnet",
-            25: "SMTP", 53: "DNS", 67: "DHCP服务", 68: "DHCP客户端",
-            69: "TFTP", 80: "HTTP", 110: "POP3", 123: "NTP",
-            143: "IMAP", 161: "SNMP", 162: "SNMP Trap", 179: "BGP",
-            443: "HTTPS", 465: "SMTPS", 587: "SMTP提交", 636: "LDAPS",
-            993: "IMAPS", 995: "POP3S", 3306: "MySQL", 3389: "RDP",
-            5432: "PostgreSQL", 5900: "VNC", 6379: "Redis",
-            8080: "HTTP代理", 8443: "HTTPS备用", 8888: "HTTP备用"
-        }
-        return common_ports.get(port_int, "未知")
-    
-    def generate_charts(self):
-        """生成统计图表"""
-        if not hasattr(self, 'capture') or not self.capture or not hasattr(self.capture, 'packets') or not self.capture.packets:
-            messagebox.showwarning("警告", "没有数据可生成图表")
-            return
-        
-        try:
-            # 获取数据
-            packets = self.capture.packets
-            total_packets = len(packets)
-            
-            # 创建图表窗口
-            plt.figure(figsize=(12, 8))
-            plt.suptitle('网络流量统计分析图表', fontsize=16, fontweight='bold')
-            
-            # 子图1：协议分布饼图
-            plt.subplot(2, 2, 1)
-            protocols = [p.get('protocol', '未知') for p in packets]
-            protocol_count = Counter(protocols)
-            
-            if protocol_count:
-                labels = list(protocol_count.keys())
-                sizes = list(protocol_count.values())
-                
-                # 如果协议太多，合并小比例协议
-                if len(labels) > 8:
-                    total = sum(sizes)
-                    new_labels = []
-                    new_sizes = []
-                    other_size = 0
-                    
-                    for i, (label, size) in enumerate(zip(labels, sizes)):
-                        if size / total > 0.05:  # 大于5%的单独显示
-                            new_labels.append(label)
-                            new_sizes.append(size)
-                        else:
-                            other_size += size
-                    
-                    if other_size > 0:
-                        new_labels.append('其他')
-                        new_sizes.append(other_size)
-                    
-                    labels, sizes = new_labels, new_sizes
-                
-                colors = plt.cm.Set3(range(len(labels)))
-                plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=colors)
-                plt.title('协议分布图', fontsize=12)
-                plt.axis('equal')
-            
-            # 子图2：包大小分布直方图
-            plt.subplot(2, 2, 2)
-            sizes = [p['length'] for p in packets]
-            
-            plt.hist(sizes, bins=20, edgecolor='black', alpha=0.7, color='skyblue')
-            plt.title('数据包大小分布', fontsize=12)
-            plt.xlabel('包大小（字节）')
-            plt.ylabel('数量')
-            plt.grid(True, alpha=0.3)
-            
-            # 子图3：Top源IP地址
-            plt.subplot(2, 2, 3)
-            src_ips = [p.get('src_ip') for p in packets if p.get('src_ip') and p.get('src_ip') != 'N/A']
-            
-            if src_ips:
-                src_ip_count = Counter(src_ips)
-                top_src = src_ip_count.most_common(10)
-                
-                if top_src:
-                    ips = [ip[:15] + '...' if len(ip) > 15 else ip for ip, count in top_src]
-                    counts = [count for ip, count in top_src]
-                    
-                    plt.barh(ips, counts, color='lightcoral')
-                    plt.title('Top 10 源IP地址', fontsize=12)
-                    plt.xlabel('包数量')
-            
-            # 子图4：Top目标IP地址
-            plt.subplot(2, 2, 4)
-            dst_ips = [p.get('dst_ip') for p in packets if p.get('dst_ip') and p.get('dst_ip') != 'N/A']
-            
-            if dst_ips:
-                dst_ip_count = Counter(dst_ips)
-                top_dst = dst_ip_count.most_common(10)
-                
-                if top_dst:
-                    ips = [ip[:15] + '...' if len(ip) > 15 else ip for ip, count in top_dst]
-                    counts = [count for ip, count in top_dst]
-                    
-                    plt.barh(ips, counts, color='lightgreen')
-                    plt.title('Top 10 目标IP地址', fontsize=12)
-                    plt.xlabel('包数量')
-            
-            plt.tight_layout()
-            plt.show()
-            
-        except ImportError:
-            messagebox.showerror("错误", "需要安装matplotlib库\n运行: pip install matplotlib")
-        except Exception as e:
-            messagebox.showerror("错误", f"生成图表失败: {str(e)}")
-    
-    def anonymize_data(self):
-        """匿名化数据包中的敏感信息"""
-        if not hasattr(self, 'capture') or not self.capture or not hasattr(self.capture, 'packets') or not self.capture.packets:
-            messagebox.showwarning("警告", "没有数据可匿名化")
-            return
-        
-        # 询问用户确认
-        confirm = messagebox.askyesno("确认", 
-            "匿名化将隐藏所有IP和MAC地址的敏感部分\n此操作不可撤销，是否继续？")
-        
-        if not confirm:
-            return
-        
-        try:
-            # 执行匿名化
-            anonymized_packets = []
-            
-            for packet in self.capture.packets:
-                # 创建副本
-                new_packet = packet.copy()
-                
-                # 匿名化IP地址（保留前两段）
-                if 'src_ip' in new_packet and new_packet['src_ip'] != 'N/A':
-                    ip_parts = new_packet['src_ip'].split('.')
-                    if len(ip_parts) == 4:
-                        new_packet['src_ip'] = f"{ip_parts[0]}.{ip_parts[1]}.x.x"
-                
-                if 'dst_ip' in new_packet and new_packet['dst_ip'] != 'N/A':
-                    ip_parts = new_packet['dst_ip'].split('.')
-                    if len(ip_parts) == 4:
-                        new_packet['dst_ip'] = f"{ip_parts[0]}.{ip_parts[1]}.x.x"
-                
-                # 匿名化MAC地址（保留前两段）
-                if 'src_mac' in new_packet and new_packet['src_mac'] != 'N/A':
-                    mac_parts = new_packet['src_mac'].split(':')
-                    if len(mac_parts) == 6:
-                        new_packet['src_mac'] = f"{mac_parts[0]}:{mac_parts[1]}:xx:xx:xx:xx"
-                
-                if 'dst_mac' in new_packet and new_packet['dst_mac'] != 'N/A':
-                    mac_parts = new_packet['dst_mac'].split(':')
-                    if len(mac_parts) == 6:
-                        new_packet['dst_mac'] = f"{mac_parts[0]}:{mac_parts[1]}:xx:xx:xx:xx"
-                
-                anonymized_packets.append(new_packet)
-            
-            # 更新数据
-            self.capture.packets = anonymized_packets
-            
-            # 更新显示
-            self.clear_table()
-            for packet in anonymized_packets:
-                self._add_packet_to_table_gui(packet)
-            
-            messagebox.showinfo("完成", 
-                "数据匿名化完成！\n✅ IP地址已隐藏后两段\n✅ MAC地址已隐藏后四段")
-            
-        except Exception as e:
-            messagebox.showerror("错误", f"匿名化失败: {str(e)}")
-    
-    def detect_anomalies(self):
-        """检测异常流量"""
-        if not hasattr(self, 'capture') or not self.capture or not hasattr(self.capture, 'packets') or not self.capture.packets:
-            messagebox.showwarning("警告", "没有数据可分析")
-            return
-        
-        packets = self.capture.packets
-        
-        try:
-            # 创建异常检测窗口
-            anomaly_window = tk.Toplevel(self.root)
-            anomaly_window.title("异常流量检测报告")
-            anomaly_window.geometry("800x600")
-            
-            # 使用Notebook
-            notebook = ttk.Notebook(anomaly_window)
-            notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-            
-            # 标签页1：端口扫描检测
-            scan_frame = ttk.Frame(notebook)
-            notebook.add(scan_frame, text="🔍 端口扫描检测")
-            
-            scan_text = scrolledtext.ScrolledText(scan_frame, width=90, height=25, font=("Courier", 10))
-            scan_text.pack(padx=10, pady=10)
-            
-            scan_info = "=" * 60 + "\n"
-            scan_info += "端口扫描检测报告\n"
-            scan_info += "=" * 60 + "\n\n"
-            
-            # 检测端口扫描
-            port_scan_results = self._detect_port_scans(packets)
-            
-            if port_scan_results:
-                scan_info += f"⚠️ 检测到 {len(port_scan_results)} 个疑似端口扫描\n\n"
-                for i, result in enumerate(port_scan_results, 1):
-                    scan_info += f"{i}. 可疑IP: {result['ip']}\n"
-                    scan_info += f"   扫描特征: 访问了 {result['port_count']} 个不同端口\n"
-                    scan_info += f"   包总数: {result['packet_count']} 个\n"
-                    scan_info += f"   时间窗口: {result['time_window']} 秒内\n"
-                    scan_info += f"   端口示例: {', '.join(map(str, result['ports'][:5]))}\n\n"
-            else:
-                scan_info += "✅ 未检测到明显的端口扫描行为\n\n"
-                scan_info += "说明:\n"
-                scan_info += "- 端口扫描通常表现为同一源IP在短时间内\n"
-                scan_info += "  访问多个不同的目标端口\n"
-                scan_info += "- 阈值: 10个不同端口/60秒\n"
-            
-            scan_text.insert(1.0, scan_info)
-            scan_text.config(state=tk.DISABLED)
-            
-            # 标签页2：DDoS检测
-            ddos_frame = ttk.Frame(notebook)
-            notebook.add(ddos_frame, text="⚡ DDoS检测")
-            
-            ddos_text = scrolledtext.ScrolledText(ddos_frame, width=90, height=25, font=("Courier", 10))
-            ddos_text.pack(padx=10, pady=10)
-            
-            ddos_info = "=" * 60 + "\n"
-            ddos_info += "DDoS攻击检测报告\n"
-            ddos_info += "=" * 60 + "\n\n"
-            
-            # 检测DDoS攻击
-            ddos_results = self._detect_ddos_attacks(packets)
-            
-            if ddos_results:
-                ddos_info += f"⚠️ 检测到 {len(ddos_results)} 个疑似DDoS攻击时段\n\n"
-                for i, result in enumerate(ddos_results, 1):
-                    ddos_info += f"{i}. 攻击时段: {result['start_time']}\n"
-                    ddos_info += f"   数据包数: {result['packet_count']} 个/秒\n"
-                    ddos_info += f"   持续时间: {result['duration']} 秒\n"
-                    ddos_info += f"   平均大小: {result['avg_size']:.1f} 字节\n"
-                    ddos_info += f"   目标IP数: {result['target_count']} 个\n\n"
-            else:
-                ddos_info += "✅ 未检测到明显的DDoS攻击\n\n"
-                ddos_info += "说明:\n"
-                ddos_info += "- DDoS攻击表现为短时间内大量数据包\n"
-                ddos_info += "  通常来自多个源IP攻击单个目标\n"
-                ddos_info += "- 阈值: 500包/秒\n"
-            
-            ddos_text.insert(1.0, ddos_info)
-            ddos_text.config(state=tk.DISABLED)
-            
-            # 标签页3：异常协议检测
-            proto_frame = ttk.Frame(notebook)
-            notebook.add(proto_frame, text="📡 异常协议检测")
-            
-            proto_text = scrolledtext.ScrolledText(proto_frame, width=90, height=25, font=("Courier", 10))
-            proto_text.pack(padx=10, pady=10)
-            
-            proto_info = "=" * 60 + "\n"
-            proto_info += "异常协议检测报告\n"
-            proto_info += "=" * 60 + "\n\n"
-            
-            # 检测异常协议
-            proto_results = self._detect_abnormal_protocols(packets)
-            
-            if proto_results:
-                proto_info += "⚠️ 检测到异常协议使用\n\n"
-                for result in proto_results:
-                    proto_info += f"🔸 异常协议: {result['protocol']}\n"
-                    proto_info += f"   使用频率: {result['count']} 次\n"
-                    proto_info += f"   占比: {result['percentage']:.1f}%\n"
-                    proto_info += f"   说明: {result['description']}\n\n"
-            else:
-                proto_info += "✅ 未检测到异常协议使用\n\n"
-                proto_info += "正常网络应主要包含以下协议:\n"
-                proto_info += "- TCP: 网页浏览、文件传输等\n"
-                proto_info += "- UDP: DNS查询、视频流等\n"
-                proto_info += "- ICMP: ping测试等\n"
-                proto_info += "- ARP: 地址解析协议\n"
-            
-            proto_text.insert(1.0, proto_info)
-            proto_text.config(state=tk.DISABLED)
-            
-        except Exception as e:
-            messagebox.showerror("错误", f"异常检测失败: {str(e)}")
-    
-    def _detect_port_scans(self, packets, time_window=60, port_threshold=10):
-        """检测端口扫描"""
-        from collections import defaultdict
-        
-        # 按源IP分组
-        ip_data = defaultdict(lambda: {'ports': set(), 'packets': [], 'count': 0})
-        
-        for packet in packets:
-            if packet.get('protocol') in ['TCP', 'UDP'] and packet.get('src_ip') and packet.get('src_ip') != 'N/A':
-                src_ip = packet['src_ip']
-                dst_port = packet.get('dst_port')
-                
-                if dst_port:
-                    ip_data[src_ip]['ports'].add(dst_port)
-                ip_data[src_ip]['packets'].append(packet)
-                ip_data[src_ip]['count'] += 1
-        
-        # 分析每个IP
-        results = []
-        for ip, data in ip_data.items():
-            if len(data['ports']) >= port_threshold and len(data['packets']) > 0:
-                # 计算时间窗口
-                times = [p.get('unix_time', 0) for p in data['packets']]
-                if len(times) > 1:
-                    time_range = max(times) - min(times)
-                else:
-                    time_range = 0
-                
-                if time_range <= time_window or time_range == 0:
-                    results.append({
-                        'ip': ip,
-                        'port_count': len(data['ports']),
-                        'packet_count': data['count'],
-                        'time_window': f"{time_range:.1f}",
-                        'ports': list(data['ports'])[:10]
-                    })
-        
-        # 按端口数量排序
-        results.sort(key=lambda x: x['port_count'], reverse=True)
-        return results
-    
-    def _detect_ddos_attacks(self, packets, threshold=500, window_size=1):
-        """检测DDoS攻击"""
-        if len(packets) < 10:
-            return []
-        
-        # 按时间分组（每秒）
-        time_groups = defaultdict(list)
-        for packet in packets:
-            timestamp = packet.get('timestamp', '')
-            if timestamp:
-                try:
-                    # 提取秒级时间
-                    time_key = timestamp[:8]  # HH:MM:SS
-                    time_groups[time_key].append(packet)
-                except:
-                    pass
-        
-        results = []
-        for time_key, group_packets in time_groups.items():
-            packet_count = len(group_packets)
-            
-            if packet_count > threshold:
-                # 分析这个时间段的流量
-                total_bytes = sum(p['length'] for p in group_packets)
-                avg_size = total_bytes / packet_count if packet_count > 0 else 0
-                
-                # 统计目标IP
-                target_ips = set()
-                for packet in group_packets:
-                    if packet.get('dst_ip') and packet.get('dst_ip') != 'N/A':
-                        target_ips.add(packet['dst_ip'])
-                
-                results.append({
-                    'start_time': time_key,
-                    'packet_count': packet_count,
-                    'avg_size': avg_size,
-                    'target_count': len(target_ips),
-                    'duration': window_size
-                })
-        
-        # 按包数量排序
-        results.sort(key=lambda x: x['packet_count'], reverse=True)
-        return results
-    
-    def _detect_abnormal_protocols(self, packets):
-        """检测异常协议"""
-        protocol_count = Counter([p.get('protocol', '未知') for p in packets])
-        total_packets = len(packets)
-        
-        abnormal = []
-        
-        # 定义正常协议
-        normal_protocols = ['TCP', 'UDP', 'ICMP', 'ARP', 'HTTP', 'HTTPS', 'DNS']
-        
-        for protocol, count in protocol_count.items():
-            if protocol not in normal_protocols and protocol != '未知':
-                percentage = (count / total_packets) * 100
-                
-                # 如果异常协议占比超过5%
-                if percentage > 5:
-                    description = "异常协议，可能表示恶意活动"
-                    
-                    if protocol.startswith('IP-'):
-                        proto_num = protocol.split('-')[1]
-                        description = f"原始IP协议({proto_num})，较少见"
-                    
-                    abnormal.append({
-                        'protocol': protocol,
-                        'count': count,
-                        'percentage': percentage,
-                        'description': description
-                    })
-        
-        return abnormal
 
 def main():
     """主函数"""
